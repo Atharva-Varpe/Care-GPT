@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Prompt Counter",
   "version": "1.0",
-  "permissions": ["storage", "scripting"],
+  "permissions": ["storage", "tabs", "activeTab", "scripting"],
   "background": {
     "service_worker": "background.js"
   },
