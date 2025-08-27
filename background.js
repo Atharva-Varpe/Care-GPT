@@ -1,28 +1,26 @@
 let totalPromptCount = 0;
-const tabPromptCounts = {}; // Store counts per tab
+const tabPromptCounts = {};
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-
   if (message.type === 'PROMPT_ADDED') {
     const tabId = sender.tab.id;
 
-    // Initialize count for this tab if it doesn't exist
     if (!tabPromptCounts[tabId]) {
       tabPromptCounts[tabId] = 0;
     }
 
-    // Update the count for this tab
     tabPromptCounts[tabId] += message.count;
+    console.log("Prompt count incremented.");
     totalPromptCount += message.count;
 
-    console.log(`Total prompt count updated: ${totalPromptCount}`);
-
+    console.log("Prompt count update triggered.");
     chrome.storage.local.set({ totalPromptCount });
 
-    // Optional: show it as badge text
+    console.log("[BG] Badge text being set to:", totalPromptCount);
     chrome.action.setBadgeText({ text: totalPromptCount.toString() });
   }
 });
+
 
 // Initialize badge on startup
 chrome.runtime.onStartup.addListener(() => {
@@ -30,4 +28,4 @@ chrome.runtime.onStartup.addListener(() => {
     totalPromptCount = result.totalPromptCount || 0;
     chrome.action.setBadgeText({ text: totalPromptCount.toString() });
   });
-});
+}); 
