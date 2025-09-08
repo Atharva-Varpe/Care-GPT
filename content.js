@@ -1,104 +1,426 @@
 function injectPromptCounterButton() {
+  const SIDEBAR_ID = "prompt-counter-sidebar";
+  const CONTENT_ID = "prompt-counter-sidebar-content";
+  const SIDEBAR_WIDTH = 320; // px
+  const THEME_KEY = "prompt-counter-theme";
+
+  // Load Chart.js first, wait until it's ready
+  function loadChartJS(callback) {
+    if (window.Chart) return callback();
+    const chartScript = document.createElement("script");
+    chartScript.src = chrome.runtime.getURL("chart.min.js");
+    chartScript.onload = callback;  // Wait for Chart.js before proceeding
+    document.head.appendChild(chartScript);
+  }
+
+  function injectInlineCSS() {
+    const style = document.createElement("style");
+    style.textContent = `
+      .stats-container {
+        display: flex;
+        flex-direction: column;
+        gap: 20px; /* gap-5 ≈ 1.25rem ≈ 20px */
+      }
+
+      .stats-card {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        padding: 12px; /* p-3 ≈ 0.75rem ≈ 12px */
+        border: 1px dotted #4ade80; /* border-green-400 */
+        border-radius: 12px; /* rounded-xl ≈ 0.75rem ≈ 12px */
+      }
+
+      .stats-title {
+        font-size: 15px;
+      }
+
+      .stats-value {
+        font-size: 28px;
+        font-weight: 800;
+        margin-top: 6px;
+      }
+
+      .metric-card {
+        flex: 1;
+        background: rgba(0, 0, 0, 0.02);
+        padding: 8px;
+        border-radius: 8px;
+        text-align: center;
+      }
+
+      .metric-emoji {
+        font-size: 16px;
+      }
+
+      .metric-value {
+        font-weight: 700;
+        margin-top: 6px;
+        font-size: 15px;
+      }
+
+      .metric-label {
+        font-size: 11px;
+      }
+
+    `;
+    document.head.appendChild(style);
+  }
+
+  function updatePromptCount(userId, newCount) {
+    const today = new Date().toISOString().split("T")[0]; // "YYYY-MM-DD"
+    chrome.storage.sync.get(["promptCounts"], ({ promptCounts }) => {
+      promptCounts = promptCounts || {};
+
+      if (!promptCounts[userId]) promptCounts[userId] = {};
+      if (!promptCounts[userId][today]) promptCounts[userId][today] = 0;
+
+      promptCounts[userId][today] += newCount;
+
+      chrome.storage.sync.set({ promptCounts }, () => {
+        console.log("Updated count:", promptCounts[userId][today]);
+      });
+    });
+  }
+
+  function getTheme() {
+    return localStorage.getItem(THEME_KEY) || "dark";
+  }
+
+  function setTheme(theme) {
+    localStorage.setItem(THEME_KEY, theme);
+    applyTheme();
+  }
+
+  function toggleTheme() {
+    setTheme(getTheme() === "light" ? "dark" : "light");
+  }
+
+  function applyTheme() {
+    const sb = document.getElementById(SIDEBAR_ID);
+    if (!sb) return;
+    const theme = getTheme();
+    if (theme === "dark") {
+      sb.style.setProperty("--bg", "#212121");
+      sb.style.setProperty("--fg", "#f5f5f5");
+      sb.style.setProperty("--muted", "#aaa");
+    } else {
+      sb.style.setProperty("--bg", "#fff");
+      sb.style.setProperty("--fg", "#000");
+      sb.style.setProperty("--muted", "#666");
+    }
+  }
+
   function getUserPromptCount() {
     return document.querySelectorAll('[data-message-author-role="user"]').length;
   }
 
-  function showToast(message) {
-    const existing = document.getElementById("chatgpt-toast");
-    if (existing) existing.remove();
+  function addDashboard(count, water, fire, tree, chartData) {
+    const sidebarContent = document.getElementById(CONTENT_ID);
+    if (!sidebarContent) return;
 
-    const toast = document.createElement("div");
-    toast.id = "chatgpt-toast";
-    toast.textContent = message;
-    toast.style.cssText = `
+    // Check if dashboard container already exists
+    let container = sidebarContent.querySelector(".stats-container");
+    if (!container) {
+      // Create container and inject HTML only once
+      container = document.createElement("div");
+      container.className = "stats-container";
+
+      container.innerHTML = `
+        <div class="stats-card">
+          <div class="stats-title">Prompts sent</div>
+          <div id="pc-count" class="stats-value">${count}</div>
+          <canvas id="pc-chart" style="max-width: 100%; margin-top: 16px;"></canvas>
+        </div>
+
+        <div class="stats-card metric-card">
+          <div class="metric-emoji">💦</div>
+          <div id="pc-water" class="metric-value">${water}</div>
+          <div class="metric-label">water</div>
+        </div>
+
+        <div class="stats-card metric-card">
+          <div class="metric-emoji">🔥</div>
+          <div id="pc-fire" class="metric-value">${fire}</div>
+          <div class="metric-label">fire</div>
+        </div>
+
+        <div class="stats-card metric-card">
+          <div class="metric-emoji">🌳</div>
+          <div id="pc-tree" class="metric-value">${tree}</div>
+          <div class="metric-label">tree</div>
+        </div>
+      `;
+
+      sidebarContent.appendChild(container);
+    } else {
+      // Update existing values
+      container.querySelector("#pc-count").textContent = count;
+      container.querySelector("#pc-water").textContent = water;
+      container.querySelector("#pc-fire").textContent = fire;
+      container.querySelector("#pc-tree").textContent = tree;
+    }
+
+    // Initialize Chart.js after the canvas is in the DOM
+    const canvas = container.querySelector("#pc-chart");
+    if (canvas) {
+      const ctx = canvas.getContext("2d");
+
+      // Destroy existing chart instance if it exists to prevent duplicates
+      if (window.pcChart) {
+        window.pcChart.destroy();
+      }
+
+      window.pcChart = new Chart(ctx, {
+        type: "line",
+        data: {
+          labels: chartData.labels,   // e.g., ["Mon", "Tue", "Wed"]
+          datasets: [{
+            label: "Prompts Sent",
+            data: chartData.values,   // e.g., [5, 7, 4]
+            borderColor: "rgba(75, 192, 192, 1)",
+            backgroundColor: "rgba(75, 192, 192, 0.1)",
+            tension: 0.3,
+            fill: true,
+            pointRadius: 3,
+            pointBackgroundColor: "rgba(75, 192, 192, 1)"
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { grid: { display: false } },
+            y: { grid: { color: "rgba(0,0,0,0.05)" } }
+          }
+        }
+      });
+    }
+  }
+
+  function createSidebarIfNeeded() {
+    let sidebar = document.getElementById(SIDEBAR_ID);
+    if (sidebar) return sidebar;
+
+    sidebar = document.createElement("div");
+    sidebar.id = SIDEBAR_ID;
+    sidebar.style.cssText = `
       position: fixed;
-      bottom: 80px;
-      right: 30px;
-      background-color: rgb(0, 200, 255);
-      color: #000;
-      padding: 12px 20px;
-      border-radius: 8px;
-      font-size: 14px;
-      z-index: 9999;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-      opacity: 0;
-      transition: opacity 0.3s ease;
+      top: 0;
+      right: -${SIDEBAR_WIDTH}px;
+      width: ${SIDEBAR_WIDTH}px;
+      height: 100%;
+      background: var(--bg, #fff);
+      color: var(--fg, #000);
+      border-left: 1px solid rgba(0,0,0,0.08);
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      transition: right 280ms cubic-bezier(.2,.8,.2,1);
+      z-index: 1000;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
     `;
-    document.body.appendChild(toast);
-    requestAnimationFrame(() => (toast.style.opacity = "1"));
-    setTimeout(() => {
-      toast.style.opacity = "0";
-      toast.addEventListener("transitionend", () => toast.remove());
-    }, 2000);
+
+    // Header with title + close button
+    const header = document.createElement("div");
+    header.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:8px;";
+
+    const title = document.createElement("div");
+    title.textContent = "Your ChatGPT Statistics";
+    title.style.cssText = "font-weight:700;font-size:20px";
+
+    const btnWrap = document.createElement("div");
+    btnWrap.style.cssText = "display:flex;gap:6px;";
+
+    const themeBtn = document.createElement("button");
+    themeBtn.id = "theme-toggle-btn";
+    themeBtn.textContent = "🌗";
+    themeBtn.style.cssText = "background:none;border:none;font-size:16px;cursor:pointer;padding:4px";
+    themeBtn.addEventListener("click", toggleTheme);
+
+    const closeBtn = document.createElement("button");
+    closeBtn.textContent = "✖";
+    closeBtn.style.cssText = "background:none;border:none;font-size:16px;cursor:pointer;padding:4px";
+    closeBtn.addEventListener("click", closeSidebar);
+
+    btnWrap.appendChild(themeBtn);
+    btnWrap.appendChild(closeBtn);
+
+    header.appendChild(title);
+    header.appendChild(btnWrap);
+
+    sidebar.appendChild(header);
+
+    const footer = document.createElement("div");
+    footer.id = "sidebar-footer";
+    footer.style.cssText = "display: flex; align-items:center; justify-content:space-between; gap:8px";
+
+    const lastUpdatedOn = document.createElement("span");
+    lastUpdatedOn.innerHTML = 
+    `
+      <div style="margin-top:12px;font-size:12px;">
+        Updated: ${new Date().toLocaleString()}
+      </div>
+    `
+    const credits = document.createElement("span");
+    credits.textContent = "Made by PS <3";
+    credits.style.cssText = "margin-top:12px;font-size:12px;"
+
+    footer.appendChild(lastUpdatedOn);
+    footer.appendChild(credits);
+
+    const content = document.createElement("div");
+    content.id = CONTENT_ID;
+    content.style.cssText = "flex:1 1 auto; overflow:auto; padding-right:4px;";
+
+    sidebar.appendChild(content);
+    sidebar.appendChild(footer);
+    document.body.appendChild(sidebar);
+
+    document.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape" && isSidebarOpen()) closeSidebar();
+    });
+
+    document.addEventListener("mousedown", (ev) => {
+      const sb = document.getElementById(SIDEBAR_ID);
+      if (!sb) return;
+      if (sb.getAttribute("data-open") === "true") {
+        if (!sb.contains(ev.target) && !ev.target.closest("#prompt-counter-btn")) {
+          closeSidebar();
+        }
+      }
+    });
+
+    // Mark closed initially
+    sidebar.setAttribute("data-open", "false");
+
+    return sidebar;
+  }
+
+  function isSidebarOpen() {
+    const sb = document.getElementById(SIDEBAR_ID);
+    return !!sb && sb.getAttribute("data-open") === "true";
+  }
+
+  function openSidebar() {
+    const sb = createSidebarIfNeeded();
+    sb.style.right = "0";
+    sb.setAttribute("data-open", "true");
+  }
+
+  function closeSidebar() {
+    const sb = document.getElementById(SIDEBAR_ID);
+    if (!sb) return;
+    sb.style.right = `-${SIDEBAR_WIDTH}px`;
+    sb.setAttribute("data-open", "false");
+  }
+
+  function toggleSidebar(newCount) {
+    const sb = createSidebarIfNeeded();
+
+    // Authenticate once
+    chrome.runtime.sendMessage({ type: "GET_AUTH_TOKEN" }, (resp) => {
+      if (!resp.success) {
+        console.error("Auth failed", resp.error);
+        
+        return;
+      }
+
+      const token = resp.token;
+
+      fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
+        headers: { Authorization: "Bearer " + token }
+      })
+        .then(res => res.json())
+        .then(user => {
+          const userId = user.id;
+
+          chrome.storage.sync.get(["promptCounts"], ({ promptCounts }) => {
+            promptCounts = promptCounts || {};
+            const userCounts = promptCounts[userId] || {};
+
+            const today = new Date().toISOString().split("T")[0];
+            const currentCount = userCounts[today] || 0;
+            const updatedCount = currentCount + (newCount || 0);
+
+            // Save updated count back to storage
+            userCounts[today] = updatedCount;
+            promptCounts[userId] = userCounts;
+
+            chrome.storage.sync.set({ promptCounts }, () => {
+              // Prepare chart data
+              const sortedDates = Object.keys(userCounts).sort();
+              const values = sortedDates.map(d => userCounts[d]);
+
+              updateSidebarContent(updatedCount, values);
+
+              // Open / close sidebar after data is ready
+              if (sb.getAttribute("data-open") === "true") {
+                closeSidebar();
+              } else {
+                openSidebar();
+              }
+            });
+          });
+        })
+        .catch(err => console.error(err));
+    });
+  }
+
+  function updateSidebarContent(count, historicalValues = []) {
+    const content = document.getElementById(CONTENT_ID) || createSidebarIfNeeded().querySelector(`#${CONTENT_ID}`);
+    if (!content) return;
+
+    const water = (count * 0.0025).toFixed(3);
+    const fire = (count * 1.2).toFixed(1);
+    const tree = (count * 0.001).toFixed(3);
+
+    const today = new Date();
+    const labels = historicalValues.map((_, i) => {
+      const d = new Date(today);
+      d.setDate(d.getDate() - (historicalValues.length - 1 - i));
+      return `${d.getMonth() + 1}/${d.getDate()}`;
+    });
+
+    addDashboard(count, water, fire, tree, { labels, values: historicalValues });
   }
 
   function addButton() {
-    
     const trailing = document.querySelector("div.flex.items-center.gap-2");
     if (!trailing) return;
 
-    // prevent duplicate
+    // Prevent duplicate
     if (trailing.querySelector("#prompt-counter-btn")) return;
 
     const btn = document.createElement("button");
     btn.id = "prompt-counter-btn";
     btn.type = "button";
     btn.textContent = "🌳";
-    btn.className = "flex h-9 items-center justify-center rounded-full disabled:text-gray-50 disabled:opacity-30 w-9 composer-secondary-button-color hover:opacity-80"; // reuse ChatGPT button styling
+    btn.className =
+      "flex h-9 items-center justify-center rounded-full disabled:text-gray-50 disabled:opacity-30 w-9 composer-secondary-button-color hover:opacity-80";
 
-    btn.addEventListener("click", () => {
-      const count = getUserPromptCount();
-      addDashboard(count);
-      showToast(`Prompts in this chat: ${count}`);
-      chrome.runtime.sendMessage({
-        type: "PROMPT_COUNT_REQUESTED",
-        count,
-      });
+    btn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const newCount = getUserPromptCount(); // your function
+      toggleSidebar(newCount);
     });
 
     trailing.appendChild(btn);
   }
 
-  function addDashboard(count) {
-    const newChatDiv = document.querySelector("aside.relative.bg-token-bg-elevated-secondary");
-    if (!newChatDiv) return;
+  // Load everything only after Chart.js is available
+  loadChartJS(() => {
+    injectInlineCSS();
+    createSidebarIfNeeded();
+    addButton();
 
-    let db = newChatDiv.querySelector("#prompt-counter-db");
+    // Observe for later DOM changes
+    const observer = new MutationObserver(() => addButton());
+    observer.observe(document.body, { childList: true, subtree: true });
+  });
 
-    if (!db) {
-      // create container if it doesn't exist yet
-      db = document.createElement("div");
-      db.id = "prompt-counter-db";
-      db.className =
-        "group __menu-item hoverable p-3 my-3 rounded-lg shadow border border-green-600 hover:border-2";
-      // db.style.cursor = "default";
-
-      db.innerHTML = `
-        <div class="flex flex-col gap-2">
-          <span class="text-sm font-semibold text-gray-700 dark:text-gray-200">
-            Prompts Sent
-          </span>
-          <span id="prompt-count-value" 
-                class="text-2xl font-bold text-blue-600 dark:text-blue-400">
-            ${count}
-          </span>
-        </div>
-      `;
-
-      newChatDiv.appendChild(db);
-    } else {
-      // update existing counter
-      const countEl =  db.querySelector("#prompt-count-value");
-      if (countEl) countEl.textContent = count;
-    }
-  }
-
-  const observer = new MutationObserver(() => addButton());
-  observer.observe(document.body, { childList: true, subtree: true });
-
-  // Initial attempt
-  addButton();
-  addDashboard(getUserPromptCount());
 }
 
 window.addEventListener("load", injectPromptCounterButton);

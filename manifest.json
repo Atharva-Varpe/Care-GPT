@@ -2,16 +2,25 @@
   "manifest_version": 3,
   "name": "Prompt Counter",
   "version": "1.0",
-  "permissions": ["storage", "tabs", "activeTab", "scripting"],
+  "permissions": ["identity", "storage", "tabs", "scripting"],
+  "oauth2": {
+    "client_id": "681348224849-6lu07bcg0l34edpkr2f9hqhbtrl28jf1.apps.googleusercontent.com",
+    "scopes": ["https://www.googleapis.com/auth/userinfo.profile"]
+  },
   "background": {
     "service_worker": "background.js"
   },
   "content_scripts": [
     {
       "matches": ["<all_urls>"], 
-      "js": ["content.js"]
+      "js": [ "chart.min.js", "content.js"],
+      "run_at": "document_idle"
     }
   ],
+  "web_accessible_resources": [{
+    "resources": ["chart.min.js"],
+    "matches": ["<all_urls>"]
+  }],
   "action": {
     "default_popup": "popup.html",
     "default_icon": "assets/logo2.png"
