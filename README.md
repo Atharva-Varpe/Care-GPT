@@ -4,7 +4,7 @@ Use ChatGPT CAREfully! All your actions have effects on the environment. Prompt 
 Track your prompt / token count, water and electricity consumption! 
 Exclusively for ChatGPT (by OpenAI)
 
-#Steps to run on your system
+## Steps to run on your system
 1. Clone this repository on your system
 2. Go to "chrome://extensions", enable "Developer Mode" and click on "Load Unpacked" and navigate to the install directory
 3. Go to "chatgpt.com", click on the 🌳 button to view stats!
